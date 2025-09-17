@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🆘 AI Women Safety System</title>
+    <style>
+        body { font-family: Arial; text-align: center; background:#1e1e1e; color:white; margin:0; padding:0; }
+        h1 { margin-top:20px; font-size:28px; color:#ff4c4c; }
+        input, button { margin:10px; padding:10px; font-size:16px; border-radius:8px; border:none; }
+        input { width:250px; }
+        button { cursor:pointer; }
+        #manualSOS { background:red; color:white; }
+        #webcamAI { background:blue; color:white; }
+        #safeNow { background:green; color:white; }
+        #saveNumber { background:orange; color:white; }
+        #status { margin-top:20px; font-size:18px; font-weight:bold; color:yellow; }
+        #videoContainer { position:relative; display:inline-block; margin-top:15px; }
+        video { width:360px; height:270px; border:2px solid white; border-radius:10px; }
+        canvas { position:absolute; left:0; top:0; width:360px; height:270px; }
+    </style>
+</head>
+<body>
+    <h1>🆘 AI Women Safety System</h1>
+
+    <!-- Emergency Number Input -->
+    <input type="text" id="contactNumber" placeholder="Enter Emergency Number">
+    <button id="saveNumber">💾 Save Number</button><br>
+
+    <button id="manualSOS">🚨 Manual SOS Alert</button>
+    <button id="webcamAI">📷 Start AI Webcam Monitor</button>
+    <button id="safeNow">✅ Safe Now</button>
+
+    <div id="status">System Ready</div>
+
+    <div id="videoContainer">
+        <video id="webcam" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <!-- Mediapipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        let alertActive=false;
+        let handsRaisedStart=null;
+        const status=document.getElementById("status");
+        const contactInput=document.getElementById("contactNumber");
+        const BACKEND_URL=""; // Optional: put your real backend URL here
+
+        // Load saved contact number
+        if(localStorage.getItem("emergencyNumber")){
+            contactInput.value=localStorage.getItem("emergencyNumber");
+        }
+
+        document.getElementById("saveNumber").onclick=()=>{
+            localStorage.setItem("emergencyNumber",contactInput.value);
+            alert("✅ Emergency number saved!");
+        };
+
+        async function getGPSLocation(){
+            return new Promise((resolve)=>{
+                if(navigator.geolocation){
+                    navigator.geolocation.getCurrentPosition(pos=>{
+                        resolve({lat:pos.coords.latitude, lon:pos.coords.longitude});
+                    }, err=>{
+                        console.warn("GPS not available", err);
+                        resolve({lat:0, lon:0});
+                    });
+                } else resolve({lat:0, lon:0});
+            });
+        }
+
+        async function sendSOS(reason){
+            if(!contactInput.value){
+                alert("⚠ Please enter and save your emergency contact number!");
+                return;
+            }
+            const loc = await getGPSLocation();
+            alertActive=true;
+            status.innerText=🚨 SOS Triggered: ${reason};
+            
+            // If you have a backend, send real request
+            if(BACKEND_URL){
+                fetch(BACKEND_URL,{
+                    method:"POST",
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({reason:reason, contact:contactInput.value, latitude:loc.lat, longitude:loc.lon})
+                }).then(r=>r.json()).then(d=>{
+                    alert(✅ SOS Sent! (${reason}));
+                    status.innerText=d.message;
+                }).catch(e=>{
+                    console.warn("Backend fetch failed", e);
+                    status.innerText="⚠ SOS triggered (no backend)";
+                });
+            } else {
+                // Simulated SMS
+                alert(📩 SMS Sent to ${contactInput.value}\nReason: ${reason}\nLocation: (${loc.lat}, ${loc.lon}));
+                console.log("Simulated SMS:", reason, loc);
+            }
+        }
+
+        document.getElementById("manualSOS").onclick=()=>{ if(!alertActive) sendSOS("Manual SOS"); };
+        document.getElementById("safeNow").onclick=()=>{ alertActive=false; status.innerText="✅ System Safe"; };
+        document.getElementById("webcamAI").onclick=()=>{ status.innerText="📷 AI Monitoring Started"; startWebcamAI(); };
+
+        function startWebcamAI(){
+            const video=document.getElementById("webcam");
+            const canvas=document.getElementById("canvas");
+            const ctx=canvas.getContext("2d");
+
+            const pose=new Pose({locateFile:file=>https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}});
+            pose.setOptions({modelComplexity:1, smoothLandmarks:true, minDetectionConfidence:0.5});
+
+            pose.onResults(results=>{
+                ctx.clearRect(0,0,canvas.width,canvas.height);
+                ctx.drawImage(results.image,0,0,canvas.width,canvas.height);
+                if(results.poseLandmarks){
+                    drawConnectors(ctx,results.poseLandmarks,POSE_CONNECTIONS,{color:"#00FF00",lineWidth:2});
+                    drawLandmarks(ctx,results.poseLandmarks,{color:"#FF0000",lineWidth:1});
+
+                    const leftWrist=results.poseLandmarks[15].y;
+                    const rightWrist=results.poseLandmarks[16].y;
+                    const nose=results.poseLandmarks[0].y;
+                    const leftKnee=results.poseLandmarks[25].y;
+                    const rightKnee=results.poseLandmarks[26].y;
+                    const avgKnee=(leftKnee+rightKnee)/2;
+
+                    // Hands Raised Detection with 2-sec delay
+                    if(leftWrist<nose && rightWrist<nose){
+                        if(!handsRaisedStart) handsRaisedStart=Date.now();
+                        if(Date.now()-handsRaisedStart>2000 && !alertActive){
+                            sendSOS("Hands Raised - Emergency");
+                        }
+                    } else {
+                        handsRaisedStart=null;
+                    }
+
+                    // Fall Detection
+                    if(nose>avgKnee && !alertActive){
+                        sendSOS("Fall Detected - Emergency");
+                    }
+                }
+            });
+
+            const camera=new Camera(video,{onFrame:()=>pose.send({image:video}),width:360,height:270});
+            camera.start();
+        }
+    </script>
+</body>
+</html>
